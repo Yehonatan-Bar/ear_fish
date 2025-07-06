@@ -1,0 +1,57 @@
+# Docker Compose configuration for translation chat application
+version: '3.8'
+
+services:
+  # FastAPI backend service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"  # Expose backend on port 8000
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}  # Claude API key from environment
+    depends_on:
+      - redis
+    networks:
+      - app-network
+    volumes:
+      - ./backend:/app  # Mount source code for hot reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # React frontend service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"  # Expose frontend on port 3000
+    networks:
+      - app-network
+    volumes:
+      - ./frontend:/app  # Mount source code for hot reload
+      - /app/node_modules  # Preserve node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000  # Backend API URL
+    command: npm run dev -- --host 0.0.0.0
+
+  # Redis cache service (currently unused but available for future caching)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"  # Standard Redis port
+    networks:
+      - app-network
+    command: redis-server --appendonly yes  # Enable persistence
+    volumes:
+      - redis_data:/data  # Persist Redis data
+
+# Network configuration for service communication
+networks:
+  app-network:
+    driver: bridge
+
+# Persistent volumes
+volumes:
+  redis_data:  # Redis data persistence

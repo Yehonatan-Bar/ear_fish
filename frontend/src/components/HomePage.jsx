@@ -14,7 +14,7 @@ const HomePage = () => {
   const createRoom = async () => {
     setIsLoading(true)
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      const apiUrl = import.meta.env.VITE_API_URL || ''
       console.log('Creating room with API URL:', apiUrl)
       
       const response = await fetch(`${apiUrl}/rooms`, {
@@ -79,10 +79,6 @@ const HomePage = () => {
             <div className="text-center">
               <button
                 onClick={createRoom}
-                onTouchEnd={(e) => {
-                  e.preventDefault()
-                  createRoom()
-                }}
                 disabled={isLoading}
                 className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors duration-200 w-full touch-manipulation"
               >

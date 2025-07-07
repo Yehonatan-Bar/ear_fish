@@ -61,8 +61,14 @@ const ChatRoom = () => {
 
   // Establish WebSocket connection to chat room
   const connectWebSocket = () => {
-    const wsUrl = `ws://localhost:8000/ws/${roomId}?client_id=${clientId.current}&language=${language}&username=${encodeURIComponent(username)}`
+    // Determine WebSocket URL based on current location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = import.meta.env.VITE_API_URL 
+      ? import.meta.env.VITE_API_URL.replace(/^https?:\/\//, '') 
+      : window.location.host
+    const wsUrl = `${protocol}//${host}/ws/${roomId}?client_id=${clientId.current}&language=${language}&username=${encodeURIComponent(username)}`
     
+    console.log('Connecting to WebSocket:', wsUrl)
     websocket.current = new WebSocket(wsUrl)
     
     // Handle connection open

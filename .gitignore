@@ -34,7 +34,7 @@ MANIFEST
 .env.development.local
 .env.test.local
 .env.production.local
-.env.example
+
 
 # Build artifacts
 build/

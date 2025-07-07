@@ -66,7 +66,7 @@ const HomePage = () => {
         
         <div className="space-y-6">
           {!showQR ? (
-            {/* Room creation button */}
+            // Room creation button
             <div className="text-center">
               <button
                 onClick={createRoom}
@@ -77,7 +77,7 @@ const HomePage = () => {
               </button>
             </div>
           ) : (
-            {/* Room created success state */}
+            // Room created success state
             <div className="text-center space-y-4">
               <h2 className="text-xl font-semibold text-white">Room Created!</h2>
               

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redis Monitor - Translation Chat</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1a1a1a;
+            color: #00ff00;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .connected { color: #00ff00; }
+        .disconnected { color: #ff0000; }
+        .section {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .section h3 {
+            color: #ffff00;
+            margin-top: 0;
+        }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 5px 0;
+            border-bottom: 1px solid #333;
+        }
+        .metric:last-child {
+            border-bottom: none;
+        }
+        .value {
+            color: #00ffff;
+            font-weight: bold;
+        }
+        .refresh-btn {
+            background: #0066cc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px;
+        }
+        .refresh-btn:hover {
+            background: #0088ff;
+        }
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .logs-section {
+            background: #000;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .key-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #111;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .key-item {
+            font-size: 12px;
+            color: #888;
+            margin: 2px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔴 Redis Monitor Dashboard</h1>
+            <p>Real-time monitoring of Redis operations in Translation Chat</p>
+            
+            <div class="auto-refresh">
+                <button class="refresh-btn" onclick="refreshData()">🔄 Refresh Now</button>
+                <label>
+                    <input type="checkbox" id="autoRefresh" onchange="toggleAutoRefresh()"> 
+                    Auto-refresh every 5 seconds
+                </label>
+            </div>
+            
+            <div id="status" class="status">🔄 Loading...</div>
+            <div id="lastUpdate">Last updated: Never</div>
+        </div>
+
+        <div class="section">
+            <h3>🔗 Redis Connection Health</h3>
+            <div id="health-data">Loading...</div>
+        </div>
+
+        <div class="section">
+            <h3>📊 Translation Statistics</h3>
+            <div id="translation-stats">Loading...</div>
+        </div>
+
+        <div class="section">
+            <h3>🏠 Room Statistics</h3>
+            <div id="room-stats">Loading...</div>
+        </div>
+
+        <div class="section">
+            <h3>🔑 Redis Data Summary</h3>
+            <div id="redis-data">Loading...</div>
+        </div>
+
+        <div class="section">
+            <h3>🎯 Log Symbol Legend</h3>
+            <div class="logs-section">
+                <div><strong>🔴 REDIS ✅</strong> - Connection established</div>
+                <div><strong>🔴 REDIS 🎯</strong> - Cache HIT (translation found in Redis)</div>
+                <div><strong>🔴 REDIS 💨</strong> - Cache MISS (translation not in Redis)</div>
+                <div><strong>🔴 REDIS 💾</strong> - Data stored in Redis</div>
+                <div><strong>🔴 REDIS 👤</strong> - User data stored</div>
+                <div><strong>🔴 REDIS 💬</strong> - Message stored in history</div>
+                <div><strong>🔴 REDIS 📊</strong> - Statistics updated</div>
+                <div><strong>💻 LOCAL CACHE HIT</strong> - Found in local memory cache</div>
+                <div><strong>🤖 CLAUDE API CALL</strong> - New translation from Claude</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>📝 Instructions</h3>
+            <div class="logs-section">
+                <p><strong>How to verify Redis is working:</strong></p>
+                <ol>
+                    <li>Check the "Redis Connection Health" section above for ✅ CONNECTED status</li>
+                    <li>Open your translation chat app in another tab</li>
+                    <li>Send messages and watch the backend logs for 🔴 REDIS indicators</li>
+                    <li>First translation of "Hello" will show 💨 MISS, then 💾 STORE</li>
+                    <li>Second translation of "Hello" will show 🎯 HIT (Redis working!)</li>
+                    <li>Check "Translation Statistics" for cache hit/miss counts</li>
+                    <li>Check "Redis Data Summary" for number of cached translations</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+
+        async function refreshData() {
+            try {
+                const response = await fetch('http://localhost:8000/redis-monitor');
+                const data = await response.json();
+                
+                updateStatus(data);
+                updateHealth(data.health || {});
+                updateTranslationStats(data.translation_stats || {});
+                updateRoomStats(data.room_stats || {});
+                updateRedisData(data.redis_data || {});
+                
+                document.getElementById('lastUpdate').textContent = 
+                    'Last updated: ' + new Date().toLocaleTimeString();
+                    
+            } catch (error) {
+                console.error('Failed to fetch data:', error);
+                document.getElementById('status').innerHTML = 
+                    '<span class="disconnected">❌ FAILED TO CONNECT TO BACKEND</span>';
+                document.getElementById('lastUpdate').textContent = 
+                    'Last update failed: ' + new Date().toLocaleTimeString();
+            }
+        }
+
+        function updateStatus(data) {
+            const status = document.getElementById('status');
+            if (data.redis_status === '✅ CONNECTED') {
+                status.innerHTML = '<span class="connected">✅ REDIS CONNECTED</span>';
+            } else {
+                status.innerHTML = '<span class="disconnected">❌ REDIS DISCONNECTED</span>';
+            }
+        }
+
+        function updateHealth(health) {
+            const container = document.getElementById('health-data');
+            container.innerHTML = `
+                <div class="metric">
+                    <span>Redis Connected:</span>
+                    <span class="value">${health.redis_connected ? '✅ Yes' : '❌ No'}</span>
+                </div>
+                <div class="metric">
+                    <span>Latency:</span>
+                    <span class="value">${health.redis_latency_ms || 'N/A'} ms</span>
+                </div>
+                <div class="metric">
+                    <span>Local Connections:</span>
+                    <span class="value">${health.local_connections || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Instance ID:</span>
+                    <span class="value">${health.instance_id || 'default'}</span>
+                </div>
+                <div class="metric">
+                    <span>Status:</span>
+                    <span class="value">${health.status || 'unknown'}</span>
+                </div>
+            `;
+        }
+
+        function updateTranslationStats(stats) {
+            const container = document.getElementById('translation-stats');
+            container.innerHTML = `
+                <div class="metric">
+                    <span>Total Translations:</span>
+                    <span class="value">${stats.total_translations || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Cache Hits:</span>
+                    <span class="value">${stats.cache_hits || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Cache Misses:</span>
+                    <span class="value">${stats.cache_misses || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Cache Hit Ratio:</span>
+                    <span class="value">${calculateHitRatio(stats.cache_hits, stats.cache_misses)}%</span>
+                </div>
+                <div class="metric">
+                    <span>Popular Languages:</span>
+                    <span class="value">${formatLanguages(stats.popular_languages || {})}</span>
+                </div>
+            `;
+        }
+
+        function updateRoomStats(stats) {
+            const container = document.getElementById('room-stats');
+            container.innerHTML = `
+                <div class="metric">
+                    <span>Active Rooms:</span>
+                    <span class="value">${stats.active_rooms || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Total Messages:</span>
+                    <span class="value">${stats.total_messages || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Local Connections:</span>
+                    <span class="value">${stats.local_connections || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Top Rooms:</span>
+                    <span class="value">${formatTopRooms(stats.top_rooms || {})}</span>
+                </div>
+            `;
+        }
+
+        function updateRedisData(data) {
+            const container = document.getElementById('redis-data');
+            container.innerHTML = `
+                <div class="metric">
+                    <span>Translation Cache Keys:</span>
+                    <span class="value">${data.total_translation_cache_keys || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Room Data Keys:</span>
+                    <span class="value">${data.total_room_keys || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Active Rate Limits:</span>
+                    <span class="value">${data.active_rate_limits || 0}</span>
+                </div>
+                <div class="metric">
+                    <span>Sample Cache Keys:</span>
+                    <div class="key-list">
+                        ${(data.sample_cache_keys || []).map(key => 
+                            `<div class="key-item">${key}</div>`
+                        ).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function calculateHitRatio(hits, misses) {
+            const total = (hits || 0) + (misses || 0);
+            if (total === 0) return 0;
+            return Math.round(((hits || 0) / total) * 100);
+        }
+
+        function formatLanguages(languages) {
+            return Object.entries(languages)
+                .map(([lang, count]) => `${lang}(${count})`)
+                .join(', ') || 'None';
+        }
+
+        function formatTopRooms(rooms) {
+            return Object.entries(rooms)
+                .slice(0, 3)
+                .map(([room, count]) => `${room.slice(0, 8)}...(${count})`)
+                .join(', ') || 'None';
+        }
+
+        function toggleAutoRefresh() {
+            const checkbox = document.getElementById('autoRefresh');
+            if (checkbox.checked) {
+                autoRefreshInterval = setInterval(refreshData, 5000);
+            } else {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = null;
+                }
+            }
+        }
+
+        // Initial load
+        refreshData();
+    </script>
+</body>
+</html>

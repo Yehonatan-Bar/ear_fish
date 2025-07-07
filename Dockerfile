@@ -1,4 +1,3 @@
-# Multi-stage build for production deployment
 FROM node:18-alpine AS frontend-build
 
 # Build frontend

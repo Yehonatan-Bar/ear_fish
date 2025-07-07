@@ -278,6 +278,7 @@ class TranslationService:
         }
         
         target_lang_name = language_codes.get(target_language, target_language)
+        logger.info(f"🤖 CLAUDE TRANSLATION REQUEST: '{text}' -> {target_lang_name} ({target_language})")
         
         prompt = f"""Translate the following text to {target_lang_name}. 
         
@@ -285,7 +286,7 @@ class TranslationService:
         - Only provide the translation, no explanations
         - Preserve the original tone and style
         - Keep formatting if any
-        - If the text is already in {target_lang_name}, return it unchanged
+        - Always translate to {target_lang_name}, even if source language is unknown
         
         Text to translate: {text}"""
         
@@ -299,7 +300,9 @@ class TranslationService:
                 ]
             )
             
-            return response.content[0].text.strip()
+            result = response.content[0].text.strip()
+            logger.info(f"🤖 CLAUDE RESPONSE: '{result}'")
+            return result
             
         except Exception as e:
             logger.error(f"Claude API error: {e}")

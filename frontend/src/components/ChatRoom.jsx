@@ -80,9 +80,12 @@ const ChatRoom = () => {
     // Handle incoming messages
     websocket.current.onmessage = (event) => {
       const data = JSON.parse(event.data)
+      console.log('Received WebSocket message:', data)
       
       if (data.type === 'message') {
         // Add translated message to chat
+        console.log('Message translations:', data.translations)
+        console.log('My language:', language)
         setMessages(prev => [...prev, data])
       } else if (data.type === 'user_joined') {
         // Show user joined notification
@@ -121,6 +124,12 @@ const ChatRoom = () => {
     // Handle connection errors
     websocket.current.onerror = (error) => {
       console.error('WebSocket error:', error)
+      setIsConnected(false)
+      // Try to reconnect after 3 seconds
+      setTimeout(() => {
+        console.log('Attempting to reconnect...')
+        connectWebSocket()
+      }, 3000)
     }
   }
 
@@ -185,6 +194,14 @@ const ChatRoom = () => {
 
   // Get appropriate text to display for a message
   const getMessageText = (message) => {
+    console.log('Getting message text for:', {
+      original: message.original_text,
+      senderLang: message.sender_language,
+      myLang: language,
+      translations: message.translations,
+      showOriginal: showOriginal[message.timestamp]
+    })
+    
     // Show original if toggled
     if (showOriginal[message.timestamp]) {
       return message.original_text
@@ -196,7 +213,9 @@ const ChatRoom = () => {
     }
     
     // Show translation or fallback to original
-    return message.translations[language] || message.original_text
+    const translatedText = message.translations[language] || message.original_text
+    console.log('Returning text:', translatedText)
+    return translatedText
   }
 
   // Format timestamp for display

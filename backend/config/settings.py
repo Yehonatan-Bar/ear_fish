@@ -21,8 +21,9 @@ class RedisConfig:
     
     @classmethod
     def from_env(cls) -> 'RedisConfig':
+        redis_password = os.getenv("REDIS_PASSWORD", "defaultpassword123")
         return cls(
-            url=os.getenv("REDIS_URL", "redis://localhost:6379"),
+            url=os.getenv("REDIS_URL", f"redis://:{redis_password}@localhost:6379"),
             max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "20")),
             socket_timeout=float(os.getenv("REDIS_SOCKET_TIMEOUT", "5.0")),
             socket_connect_timeout=float(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "5.0")),

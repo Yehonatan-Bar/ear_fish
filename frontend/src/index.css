@@ -28,3 +28,16 @@ body {
   margin: 0 auto;
   text-align: center;
 }
+
+/* Ensure proper touch handling on mobile */
+.touch-manipulation {
+  touch-action: manipulation;
+}
+
+/* Prevent double-tap zoom on mobile */
+button {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}

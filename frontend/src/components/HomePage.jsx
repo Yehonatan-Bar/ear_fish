@@ -14,22 +14,31 @@ const HomePage = () => {
   const createRoom = async () => {
     setIsLoading(true)
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/rooms`, {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      console.log('Creating room with API URL:', apiUrl)
+      
+      const response = await fetch(`${apiUrl}/rooms`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
       })
       
+      console.log('Response status:', response.status)
+      
       if (response.ok) {
         const data = await response.json()
+        console.log('Room created:', data)
         setRoomId(data.room_id)
         setShowQR(true)
       } else {
-        console.error('Failed to create room')
+        const errorText = await response.text()
+        console.error('Failed to create room:', response.status, errorText)
+        alert(`Failed to create room: ${response.status} ${errorText}`)
       }
     } catch (error) {
       console.error('Error creating room:', error)
+      alert(`Error creating room: ${error.message}`)
     } finally {
       setIsLoading(false)
     }
@@ -70,8 +79,12 @@ const HomePage = () => {
             <div className="text-center">
               <button
                 onClick={createRoom}
+                onTouchEnd={(e) => {
+                  e.preventDefault()
+                  createRoom()
+                }}
                 disabled={isLoading}
-                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors duration-200 w-full"
+                className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors duration-200 w-full touch-manipulation"
               >
                 {isLoading ? 'Creating Room...' : 'Create New Room'}
               </button>

@@ -16,27 +16,25 @@ class RedisConnectionManager:
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         self.redis_client = None
         self.local_connections: Dict[str, Dict[str, WebSocket]] = {}
+        self.local_user_languages: Dict[str, Dict[str, str]] = {}  # room_id -> {client_id: language}
         self.instance_id = os.getenv("INSTANCE_ID", "default")
         
     async def _get_redis_client(self) -> Optional[redis.Redis]:
-        """Get Redis client with connection pooling"""
-        if self.redis_client is None:
-            try:
-                self.redis_client = redis.from_url(
-                    self.redis_url,
-                    decode_responses=True,
-                    socket_timeout=2.0,
-                    socket_connect_timeout=2.0,
-                    retry_on_timeout=True,
-                    health_check_interval=30
-                )
-                await self.redis_client.ping()
-                logger.info(f"🔴 REDIS ✅ Connection Manager connected for instance {self.instance_id}")
-                logger.info(f"Redis connection established for instance {self.instance_id}")
-            except Exception as e:
-                logger.warning(f"Redis connection failed: {e}")
-                self.redis_client = None
-        return self.redis_client
+        """Get Redis client - create new connection each time to avoid recursion issues"""
+        try:
+            client = redis.from_url(
+                self.redis_url,
+                decode_responses=True,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+                retry_on_timeout=True,
+                health_check_interval=30
+            )
+            await client.ping()
+            return client
+        except Exception as e:
+            logger.warning(f"Redis connection failed: {e}")
+            return None
 
     async def connect(self, websocket: WebSocket, room_id: str, client_id: str, language: str, username: str = None):
         """Handle new WebSocket connection with Redis state management"""
@@ -47,7 +45,13 @@ class RedisConnectionManager:
             self.local_connections[room_id] = {}
         self.local_connections[room_id][client_id] = websocket
         
+        # Store local language mapping
+        if room_id not in self.local_user_languages:
+            self.local_user_languages[room_id] = {}
+        self.local_user_languages[room_id][client_id] = language
+        
         # Store connection metadata in Redis
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -79,6 +83,9 @@ class RedisConnectionManager:
                 
         except Exception as e:
             logger.error(f"Redis connection storage error: {e}")
+        finally:
+            if client:
+                await client.close()
         
         # Broadcast user joined event
         await self.broadcast_to_room(room_id, {
@@ -100,7 +107,17 @@ class RedisConnectionManager:
             if not self.local_connections[room_id]:
                 del self.local_connections[room_id]
         
+        # Remove local language mapping
+        if room_id in self.local_user_languages:
+            if client_id in self.local_user_languages[room_id]:
+                del self.local_user_languages[room_id][client_id]
+            
+            # Clean up empty rooms
+            if not self.local_user_languages[room_id]:
+                del self.local_user_languages[room_id]
+        
         # Clean up Redis data
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -122,6 +139,9 @@ class RedisConnectionManager:
                 
         except Exception as e:
             logger.error(f"Redis disconnect cleanup error: {e}")
+        finally:
+            if client:
+                await client.close()
         
         logger.info(f"User {client_id} disconnected from room {room_id}")
 
@@ -143,22 +163,31 @@ class RedisConnectionManager:
 
     async def get_room_languages(self, room_id: str) -> Set[str]:
         """Get all languages being used in a room"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
                 languages = await client.hvals(f"room:{room_id}:languages")
-                return set(languages)
+                if languages:
+                    return set(languages)
         except Exception as e:
-            logger.error(f"Failed to get room languages: {e}")
+            logger.error(f"Failed to get room languages from Redis: {e}")
+        finally:
+            if client:
+                await client.close()
         
         # Fallback to local data if Redis fails
-        if room_id in self.local_connections:
-            # This is a simplified fallback - in production you'd want better state management
-            return {"en"}  # Default fallback
+        if room_id in self.local_user_languages:
+            languages = set(self.local_user_languages[room_id].values())
+            logger.info(f"Using local language data for room {room_id}: {languages}")
+            return languages
+        
+        logger.warning(f"No language data found for room {room_id}")
         return set()
 
     async def get_room_users(self, room_id: str) -> Dict[str, dict]:
         """Get all users in a room with their metadata"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -173,11 +202,15 @@ class RedisConnectionManager:
                 return users
         except Exception as e:
             logger.error(f"Failed to get room users: {e}")
+        finally:
+            if client:
+                await client.close()
         
         return {}
 
     async def store_message(self, room_id: str, message: dict, max_history: int = 50):
         """Store message in room history"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -195,9 +228,13 @@ class RedisConnectionManager:
                 
         except Exception as e:
             logger.error(f"Failed to store message: {e}")
+        finally:
+            if client:
+                await client.close()
 
     async def get_message_history(self, room_id: str, limit: int = 20) -> list:
         """Get recent message history for a room"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -205,11 +242,15 @@ class RedisConnectionManager:
                 return [json.loads(msg) for msg in messages]
         except Exception as e:
             logger.error(f"Failed to get message history: {e}")
+        finally:
+            if client:
+                await client.close()
         
         return []
 
     async def get_room_stats(self) -> Dict[str, Any]:
         """Get comprehensive room statistics"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -234,11 +275,15 @@ class RedisConnectionManager:
                 }
         except Exception as e:
             logger.error(f"Failed to get room stats: {e}")
+        finally:
+            if client:
+                await client.close()
         
         return {"error": "Redis unavailable"}
 
     async def cleanup_stale_connections(self, max_age_hours: int = 24):
         """Clean up stale user connections"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -247,9 +292,13 @@ class RedisConnectionManager:
                 logger.info("Stale connection cleanup would run here")
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
+        finally:
+            if client:
+                await client.close()
 
     async def health_check(self) -> Dict[str, Any]:
         """Health check for Redis connection and service status"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -266,6 +315,9 @@ class RedisConnectionManager:
                 }
         except Exception as e:
             logger.error(f"Health check failed: {e}")
+        finally:
+            if client:
+                await client.close()
         
         return {
             "redis_connected": False,

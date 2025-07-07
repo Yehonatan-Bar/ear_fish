@@ -17,7 +17,7 @@ class TranslationService:
     def __init__(self):
         self.client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.cache: Dict[Tuple[str, str], str] = {}
-        self.timeout = 1.5
+        self.timeout = 5.0  # Increased from 1.5 to handle longer translations
         self.redis_client = None
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         self.cache_ttl = 86400  # 24 hours
@@ -25,29 +25,27 @@ class TranslationService:
         self.rate_limit_max = 10  # 10 requests per minute
         
     async def _get_redis_client(self) -> Optional[redis.Redis]:
-        """Get Redis client with connection pooling and error handling"""
-        if self.redis_client is None:
-            try:
-                self.redis_client = redis.from_url(
-                    self.redis_url,
-                    decode_responses=True,
-                    socket_timeout=2.0,
-                    socket_connect_timeout=2.0,
-                    retry_on_timeout=True,
-                    health_check_interval=30
-                )
-                # Test connection
-                await self.redis_client.ping()
-                logger.info("🔴 REDIS ✅ Connection established successfully!")
-                logger.info(f"🔴 REDIS 🔗 Connected to: {self.redis_url}")
-            except Exception as e:
-                logger.warning(f"🔴 REDIS ❌ Connection failed: {e}")
-                logger.warning("🔴 REDIS 💔 Falling back to local cache only")
-                self.redis_client = None
-        return self.redis_client
+        """Get Redis client - create new connection each time to avoid recursion issues"""
+        try:
+            client = redis.from_url(
+                self.redis_url,
+                decode_responses=True,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+                retry_on_timeout=True,
+                health_check_interval=30
+            )
+            # Test connection
+            await client.ping()
+            return client
+        except Exception as e:
+            logger.warning(f"🔴 REDIS ❌ Connection failed: {e}")
+            logger.warning("🔴 REDIS 💔 Falling back to local cache only")
+            return None
     
     async def _redis_get(self, key: str) -> Optional[str]:
         """Safe Redis get with error handling"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -59,10 +57,14 @@ class TranslationService:
                 return result
         except Exception as e:
             logger.warning(f"🔴 REDIS ⚠️  Get error: {e}")
+        finally:
+            if client:
+                await client.close()
         return None
     
     async def _redis_set(self, key: str, value: str, ttl: int = None) -> bool:
         """Safe Redis set with error handling"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -75,10 +77,14 @@ class TranslationService:
                 return True
         except Exception as e:
             logger.warning(f"🔴 REDIS ⚠️  Set error: {e}")
+        finally:
+            if client:
+                await client.close()
         return False
     
     async def _redis_incr(self, key: str, ttl: int = None) -> Optional[int]:
         """Safe Redis increment with error handling"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -89,6 +95,9 @@ class TranslationService:
                 return count
         except Exception as e:
             logger.warning(f"🔴 REDIS ⚠️  Incr error: {e}")
+        finally:
+            if client:
+                await client.close()
         return None
     
     def _get_cache_key(self, text: str, target_language: str, source_language: str = None) -> str:
@@ -211,6 +220,7 @@ class TranslationService:
     
     async def get_translation_stats(self) -> Dict[str, Any]:
         """Get translation statistics from Redis"""
+        client = None
         try:
             client = await self._get_redis_client()
             if not client:
@@ -236,9 +246,13 @@ class TranslationService:
         except Exception as e:
             logger.error(f"Stats error: {e}")
             return {"error": str(e)}
+        finally:
+            if client:
+                await client.close()
     
     async def _update_stats(self, target_language: str, cache_hit: bool = False):
         """Update translation statistics"""
+        client = None
         try:
             client = await self._get_redis_client()
             if client:
@@ -250,6 +264,9 @@ class TranslationService:
                     await client.incr("cache_misses")
         except Exception as e:
             logger.warning(f"Stats update error: {e}")
+        finally:
+            if client:
+                await client.close()
     
     async def _translate_with_claude(self, text: str, target_language: str) -> str:
         language_codes = {

@@ -10,7 +10,26 @@ from fastapi import WebSocket
 logger = logging.getLogger(__name__)
 
 class RedisConnectionManager:
-    """Redis-backed WebSocket connection manager for multi-instance deployments"""
+    """
+    Redis-backed WebSocket connection manager for multi-instance deployments.
+    
+    This manager handles WebSocket connections in a distributed environment,
+    allowing multiple server instances to share connection state via Redis.
+    
+    Key features:
+    - Distributed connection tracking across multiple server instances
+    - Room-based message broadcasting
+    - User metadata and language preference storage
+    - Message history persistence
+    - Connection health monitoring
+    - Automatic cleanup of stale connections
+    
+    Libraries used:
+        - redis.asyncio: For distributed state management
+        - FastAPI WebSocket: For real-time client connections
+        - json: For message serialization
+        - logging: For operation tracking
+    """
     
     def __init__(self):
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -20,7 +39,21 @@ class RedisConnectionManager:
         self.instance_id = os.getenv("INSTANCE_ID", "default")
         
     async def _get_redis_client(self) -> Optional[redis.Redis]:
-        """Get Redis client - create new connection each time to avoid recursion issues"""
+        """
+        Creates a new Redis client connection for each operation.
+        
+        This method creates fresh connections to avoid connection pooling issues
+        and potential recursion problems. Each connection is configured with:
+        - Short timeouts (2s) for fast failure detection
+        - Automatic retry on timeout
+        - Health check intervals for connection monitoring
+        
+        Returns:
+            Optional[redis.Redis]: Connected Redis client or None if connection fails
+        
+        Note:
+            Connections should always be closed after use to prevent leaks.
+        """
         try:
             client = redis.from_url(
                 self.redis_url,
@@ -37,7 +70,34 @@ class RedisConnectionManager:
             return None
 
     async def connect(self, websocket: WebSocket, room_id: str, client_id: str, language: str, username: str = None):
-        """Handle new WebSocket connection with Redis state management"""
+        """
+        Handles new WebSocket connections and syncs state to Redis.
+        
+        This method performs several operations when a user connects:
+        1. Accepts the WebSocket connection
+        2. Stores connection in local memory for this instance
+        3. Persists user metadata to Redis for cross-instance access
+        4. Updates room membership and statistics
+        5. Broadcasts join event to all room participants
+        
+        Redis operations performed:
+        - SADD: Add user to room set
+        - HSET: Store user metadata (language, username, timestamp)
+        - ZINCRBY: Update room and language statistics
+        
+        Args:
+            websocket: FastAPI WebSocket connection
+            room_id: Unique room identifier
+            client_id: Unique client identifier
+            language: User's preferred language code
+            username: Optional display name
+        
+        Emoji indicators in logs:
+            🔴 REDIS 👤: User data stored
+            🔴 REDIS 🏠: Room membership updated
+            🔴 REDIS 🌍: Language preference tracked
+            🔴 REDIS 📊: Statistics updated
+        """
         await websocket.accept()
         
         # Store local connection
@@ -97,7 +157,29 @@ class RedisConnectionManager:
         })
 
     async def disconnect(self, room_id: str, client_id: str):
-        """Handle WebSocket disconnection with Redis cleanup"""
+        """
+        Handles WebSocket disconnections and cleans up Redis state.
+        
+        This method ensures proper cleanup when a user disconnects:
+        1. Removes connection from local memory
+        2. Cleans up user data from Redis
+        3. Updates room membership
+        4. Deletes empty rooms to prevent memory leaks
+        
+        Redis operations performed:
+        - SREM: Remove user from room set
+        - DELETE: Remove user metadata
+        - HDEL: Remove from room language mapping
+        - Conditional DELETE: Remove empty room data
+        
+        Args:
+            room_id: Room the user is leaving
+            client_id: Disconnecting client's identifier
+        
+        Note:
+            Empty rooms are automatically cleaned up to prevent
+            Redis memory bloat from abandoned rooms.
+        """
         # Remove local connection
         if room_id in self.local_connections:
             if client_id in self.local_connections[room_id]:
@@ -146,7 +228,26 @@ class RedisConnectionManager:
         logger.info(f"User {client_id} disconnected from room {room_id}")
 
     async def broadcast_to_room(self, room_id: str, message: dict):
-        """Broadcast message to all users in a room (local connections only)"""
+        """
+        Broadcasts a message to all WebSocket connections in a room.
+        
+        This method sends messages only to connections managed by this
+        server instance (local connections). In a multi-instance deployment,
+        each instance handles its own connections.
+        
+        Features:
+        - Automatic detection and cleanup of failed connections
+        - JSON serialization of message data
+        - Graceful error handling for network issues
+        
+        Args:
+            room_id: Target room for broadcast
+            message: Dictionary containing message data
+        
+        Note:
+            Failed connections are automatically disconnected and cleaned up
+            to maintain connection list integrity.
+        """
         if room_id in self.local_connections:
             disconnected_clients = []
             
@@ -162,7 +263,25 @@ class RedisConnectionManager:
                 await self.disconnect(room_id, client_id)
 
     async def get_room_languages(self, room_id: str) -> Set[str]:
-        """Get all languages being used in a room"""
+        """
+        Retrieves all unique languages being used in a chat room.
+        
+        This method is crucial for the translation system as it determines
+        which languages need translations. It:
+        1. Queries Redis for the authoritative language list
+        2. Falls back to local data if Redis is unavailable
+        3. Returns a set of unique language codes
+        
+        Returns:
+            Set[str]: Unique language codes (e.g., {'en', 'es', 'fr'})
+        
+        Fallback behavior:
+            If Redis is unavailable, uses local instance data which may
+            be incomplete in multi-instance deployments.
+        
+        Libraries used:
+            - Redis HVALS: To get all values from language hash
+        """
         client = None
         try:
             client = await self._get_redis_client()
@@ -186,7 +305,27 @@ class RedisConnectionManager:
         return set()
 
     async def get_room_users(self, room_id: str) -> Dict[str, dict]:
-        """Get all users in a room with their metadata"""
+        """
+        Retrieves all users in a room with their complete metadata.
+        
+        This method provides a comprehensive view of room participants by:
+        1. Getting user IDs from the room membership set
+        2. Fetching detailed metadata for each user
+        3. Returning a dictionary mapping user IDs to their data
+        
+        User metadata includes:
+        - language: User's preferred language
+        - username: Display name
+        - instance_id: Server instance handling the connection
+        - connected_at: Connection timestamp
+        
+        Returns:
+            Dict[str, dict]: Mapping of user_id to user metadata
+        
+        Redis operations:
+            - SMEMBERS: Get all user IDs in room
+            - HGETALL: Get user metadata for each ID
+        """
         client = None
         try:
             client = await self._get_redis_client()
@@ -209,7 +348,29 @@ class RedisConnectionManager:
         return {}
 
     async def store_message(self, room_id: str, message: dict, max_history: int = 50):
-        """Store message in room history"""
+        """
+        Stores a message in the room's persistent history.
+        
+        This method maintains a rolling history of messages for each room,
+        allowing users to see recent messages when joining. It:
+        1. Adds new messages to the front of the list (LIFO)
+        2. Maintains a maximum history size to prevent memory bloat
+        3. Updates message count statistics
+        
+        Args:
+            room_id: Room to store message in
+            message: Complete message data including translations
+            max_history: Maximum messages to keep (default: 50)
+        
+        Redis operations:
+            - LPUSH: Add message to history list
+            - LTRIM: Keep only the most recent N messages
+            - INCR: Update message counters
+        
+        Emoji indicators:
+            🔴 REDIS 💬: Message stored in history
+            🔴 REDIS 📝: History trimmed to size limit
+        """
         client = None
         try:
             client = await self._get_redis_client()
@@ -233,7 +394,26 @@ class RedisConnectionManager:
                 await client.close()
 
     async def get_message_history(self, room_id: str, limit: int = 20) -> list:
-        """Get recent message history for a room"""
+        """
+        Retrieves recent message history for a room.
+        
+        This method fetches stored messages from Redis, typically used when:
+        - New users join a room and need context
+        - Users refresh the page
+        - Loading conversation history
+        
+        Messages are returned in reverse chronological order (newest first).
+        
+        Args:
+            room_id: Room to get history for
+            limit: Maximum messages to retrieve (default: 20)
+        
+        Returns:
+            list: List of message dictionaries with all translations
+        
+        Redis operations:
+            - LRANGE: Get range of messages from history list
+        """
         client = None
         try:
             client = await self._get_redis_client()
@@ -249,7 +429,35 @@ class RedisConnectionManager:
         return []
 
     async def get_room_stats(self) -> Dict[str, Any]:
-        """Get comprehensive room statistics"""
+        """
+        Gathers comprehensive statistics about all chat rooms.
+        
+        This method collects system-wide metrics including:
+        - Active room count
+        - Total messages sent
+        - Most active rooms (by join count)
+        - Popular languages
+        - Current connection count for this instance
+        
+        These statistics are useful for:
+        - Monitoring system health and usage
+        - Identifying popular rooms
+        - Understanding language distribution
+        - Capacity planning
+        
+        Returns:
+            Dict containing:
+            - active_rooms: Number of rooms with users
+            - total_messages: Global message count
+            - top_rooms: Top 10 rooms by activity
+            - popular_languages: Top 10 languages by usage
+            - local_connections: Connections on this instance
+        
+        Redis operations:
+            - ZREVRANGE: Get top items from sorted sets
+            - KEYS: Count active room keys
+            - GET: Retrieve counter values
+        """
         client = None
         try:
             client = await self._get_redis_client()
@@ -282,7 +490,24 @@ class RedisConnectionManager:
         return {"error": "Redis unavailable"}
 
     async def cleanup_stale_connections(self, max_age_hours: int = 24):
-        """Clean up stale user connections"""
+        """
+        Cleans up stale connections from crashed instances or network failures.
+        
+        This method would typically:
+        - Identify connections older than max_age_hours
+        - Remove stale user data and room memberships
+        - Clean up orphaned rooms
+        
+        Args:
+            max_age_hours: Maximum age before considering connection stale
+        
+        Note:
+            Current implementation is a placeholder. A full implementation
+            would check connection timestamps and remove outdated entries.
+        
+        TODO:
+            Implement timestamp checking and cleanup logic
+        """
         client = None
         try:
             client = await self._get_redis_client()
@@ -297,7 +522,32 @@ class RedisConnectionManager:
                 await client.close()
 
     async def health_check(self) -> Dict[str, Any]:
-        """Health check for Redis connection and service status"""
+        """
+        Performs comprehensive health check of the connection manager.
+        
+        This method checks:
+        - Redis connectivity and response time
+        - Local connection count
+        - Instance identification
+        - Overall service health status
+        
+        Health states:
+        - "healthy": Redis connected, low latency
+        - "degraded": Redis unavailable, using local fallbacks
+        
+        Returns:
+            Dict containing:
+            - redis_connected: Boolean connection status
+            - redis_latency_ms: Round-trip time to Redis
+            - local_connections: Active WebSocket count
+            - instance_id: Server instance identifier
+            - status: Overall health state
+        
+        Used by:
+            - Load balancers for health checks
+            - Monitoring systems
+            - Debugging connection issues
+        """
         client = None
         try:
             client = await self._get_redis_client()

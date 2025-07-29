@@ -80,3 +80,6 @@ temp/
 .env
 .env.local
 .env.production
+
+# Code documentation
+CODEBASE_DOCUMENTATION.md
